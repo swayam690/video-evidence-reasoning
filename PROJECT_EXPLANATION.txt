@@ -189,3 +189,4 @@ What the 50 steps proved:
    - Cache their features and train ZoomVid for 200–500 steps.
    - Produce the final research graphs: Accuracy vs. Token Budget vs. Latency.
 ================================================================================
+
