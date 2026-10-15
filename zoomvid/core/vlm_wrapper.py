@@ -169,7 +169,18 @@ class FrozenVLMBackbone(nn.Module):
 
         # Forward through vision encoder and spatial patch merger
         vision_outputs = self.visual(pixel_values, grid_thw=grid_thw)
-        return vision_outputs
+
+        # Handle BaseModelOutputWithPooling or raw tensor return types
+        if isinstance(vision_outputs, torch.Tensor):
+            return vision_outputs
+        if hasattr(vision_outputs, "pooler_output") and vision_outputs.pooler_output is not None:
+            out = vision_outputs.pooler_output
+            if isinstance(out, (tuple, list)):
+                return torch.cat(out, dim=0)
+            return out
+        if hasattr(vision_outputs, "last_hidden_state") and vision_outputs.last_hidden_state is not None:
+            return vision_outputs.last_hidden_state
+        return vision_outputs[0]
 
     def embed_text(self, text: str) -> torch.Tensor:
         """Tokenize and compute embedding vectors for a text string.

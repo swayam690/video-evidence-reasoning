@@ -102,13 +102,20 @@ def run_colab_vlm_equivalence_test() -> None:
         )
     print(f"   Extracted visual tokens shape: {list(visual_tokens.shape)}")
 
+    # In batch format [B, T, D]
+    visual_tokens_batched = (
+        visual_tokens if visual_tokens.ndim == 3 else visual_tokens.unsqueeze(0)
+    )
+
     # Step 6: Feed visual tokens back through the injection path
     print("6. Feeding visual tokens through custom injection path...")
-    prefix = "<|im_start|>user\n<|vision_start|>"
-    suffix = f"<|vision_end|>{prompt_text}<|im_end|>\n<|im_start|>assistant\n"
-
-    # In batch format [B, T, D]
-    visual_tokens_batched = visual_tokens.unsqueeze(0)
+    # Derive prefix and suffix directly from processor's chat template
+    if "<|vision_start|>" in text_prompt and "<|vision_end|>" in text_prompt:
+        prefix = text_prompt.split("<|vision_start|>")[0] + "<|vision_start|>"
+        suffix = "<|vision_end|>" + text_prompt.split("<|vision_end|>")[1]
+    else:
+        prefix = "<|im_start|>user\n<|vision_start|>"
+        suffix = f"<|vision_end|>{prompt_text}<|im_end|>\n<|im_start|>assistant\n"
 
     with torch.no_grad():
         injected_outputs = backbone.forward_with_injected_tokens(
