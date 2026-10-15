@@ -259,7 +259,8 @@ class Trainer:
         t = module_tokens.shape[1]
 
         suffix = self.suffix_template.format(question=question)
-        image_grid_thw = torch.tensor([[t, 1, 1]], dtype=torch.long, device=self.device)
+        m = self.backbone.spatial_merge_size
+        image_grid_thw = torch.tensor([[t, m, m]], dtype=torch.long, device=self.device)
 
         # Forward through frozen VLM with loss
         vlm_output = self.backbone.forward_with_injected_tokens(

@@ -300,7 +300,8 @@ class FrozenVLMBackbone(nn.Module):
 
         # Build image_grid_thw if not provided: treat as 1D temporal sequence
         if image_grid_thw is None:
-            image_grid_thw = torch.tensor([[t, 1, 1]], dtype=torch.long, device=self.device)
+            m = self.spatial_merge_size
+            image_grid_thw = torch.tensor([[t, m, m]], dtype=torch.long, device=self.device).repeat(b, 1)
 
         # Wrap module tokens as mm_encoder_outputs (one list entry per batch element)
         per_sample_tokens = [module_tokens[i] for i in range(b)]
@@ -413,7 +414,8 @@ class FrozenVLMBackbone(nn.Module):
             mm_type_ids = mm_type_ids.repeat(b, 1)
 
         if image_grid_thw is None:
-            image_grid_thw = torch.tensor([[t, 1, 1]], dtype=torch.long, device=self.device)
+            m = self.spatial_merge_size
+            image_grid_thw = torch.tensor([[t, m, m]], dtype=torch.long, device=self.device).repeat(b, 1)
 
         per_sample_tokens = [module_tokens[i] for i in range(b)]
         mm_encoder_outputs = {

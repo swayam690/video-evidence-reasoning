@@ -135,8 +135,9 @@ def evaluate_module(
             suffix = suffix_template.format(question=question)
 
             # Build grid_thw for the module output
+            m = backbone.spatial_merge_size
             image_grid_thw = torch.tensor(
-                [[token_count, 1, 1]], dtype=torch.long, device=backbone.device
+                [[token_count, m, m]], dtype=torch.long, device=backbone.device
             )
 
             generated = backbone.generate_from_injected_tokens(
