@@ -40,12 +40,17 @@ MODULE_REGISTRY = {
 }
 
 
-def load_module_from_checkpoint(checkpoint_path: str, device: str = "cpu") -> ContextModule:
+def load_module_from_checkpoint(
+    checkpoint_path: str,
+    device: str = "cpu",
+    dtype: Optional[torch.dtype] = None,
+) -> ContextModule:
     """Load a trained ContextModule from a checkpoint file.
 
     Args:
         checkpoint_path: Path to checkpoint .pt file.
         device: Target device.
+        dtype: Optional torch dtype.
 
     Returns:
         Loaded ContextModule instance.
@@ -66,7 +71,10 @@ def load_module_from_checkpoint(checkpoint_path: str, device: str = "cpu") -> Co
 
     module = cls(in_features=in_features, out_features=out_features)
     module.load_state_dict(ckpt["state_dict"])
-    module.to(device)
+    if dtype is not None:
+        module.to(device=device, dtype=dtype)
+    else:
+        module.to(device)
     module.eval()
     return module
 
@@ -114,7 +122,7 @@ def main() -> None:
     out_feat = backbone.llm_hidden_size
 
     if args.checkpoint:
-        module = load_module_from_checkpoint(args.checkpoint, device=device)
+        module = load_module_from_checkpoint(args.checkpoint, device=device, dtype=backbone.dtype)
         module_name = f"checkpoint:{Path(args.checkpoint).stem}"
     elif args.module_type:
         cls = MODULE_REGISTRY[args.module_type]
@@ -123,7 +131,7 @@ def main() -> None:
     else:
         raise ValueError("Must specify either --checkpoint or --module-type")
 
-    module.to(device)
+    module.to(device=device, dtype=backbone.dtype)
     module.eval()
 
     # Evaluate across budgets

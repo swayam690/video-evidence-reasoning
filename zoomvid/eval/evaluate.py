@@ -93,6 +93,7 @@ def evaluate_module(
     Returns:
         EvalReport with accuracy and per-sample results.
     """
+    module.to(device=backbone.device, dtype=backbone.dtype)
     module.eval()
     results: List[EvalResult] = []
 
@@ -117,6 +118,10 @@ def evaluate_module(
                 token_budget=token_budget,
                 mode="qa",
             )
+            batch.frame_feats = batch.frame_feats.to(device=backbone.device, dtype=backbone.dtype)
+            batch.timestamps = batch.timestamps.to(device=backbone.device)
+            if batch.question_emb is not None:
+                batch.question_emb = batch.question_emb.to(device=backbone.device, dtype=backbone.dtype)
 
             # Forward through context module
             t_start = time.time()

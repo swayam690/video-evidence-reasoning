@@ -71,6 +71,7 @@ class DummyModule(ContextModule):
             selected_times = timestamps
 
         # Trainable projection: [B, T, D] -> [B, T, D_llm]
+        x = x.to(device=self.proj.weight.device, dtype=self.proj.weight.dtype)
         tokens = self.norm(self.proj(x))
 
         segment_spans: List[List[Tuple[float, float]]] = []

@@ -94,6 +94,7 @@ class SimilarityModule(ContextModule):
         tokens = selected_feats.reshape(b, k * p, d)
 
         if self.proj is not None:
+            tokens = tokens.to(device=self.proj.weight.device, dtype=self.proj.weight.dtype)
             tokens = self.proj(tokens)
 
         segment_spans: List[List[Tuple[float, float]]] = []

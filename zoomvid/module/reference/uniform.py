@@ -73,6 +73,7 @@ class UniformModule(ContextModule):
 
         # Project to D_llm if necessary
         if self.proj is not None:
+            tokens = tokens.to(device=self.proj.weight.device, dtype=self.proj.weight.dtype)
             tokens = self.proj(tokens)
 
         # Build temporal spans for selected frames: [(t, t)]

@@ -140,7 +140,7 @@ class Trainer:
         self._set_seed(seed)
 
         self.device = backbone.device
-        self.module.to(self.device)
+        self.module.to(device=self.device, dtype=self.backbone.dtype)
 
         # Optimizer (only module parameters — backbone is frozen)
         self.optimizer = torch.optim.AdamW(
@@ -235,7 +235,13 @@ class Trainer:
         # Random token budget per step
         budget = random.randint(*self.budget_range)
 
-        frame_feats = sample["frame_feats"].unsqueeze(0).to(self.device)  # [1, N, P, D]
+        # Match frame_feats dtype to module parameter dtype (or backbone dtype)
+        try:
+            param_dtype = next(self.module.parameters()).dtype
+        except StopIteration:
+            param_dtype = self.backbone.dtype
+
+        frame_feats = sample["frame_feats"].unsqueeze(0).to(device=self.device, dtype=param_dtype)  # [1, N, P, D]
         timestamps = sample["timestamps"].unsqueeze(0).to(self.device)    # [1, N]
         question = sample["question"]
         answer = sample["answer"]
