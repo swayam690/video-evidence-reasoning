@@ -1,8 +1,11 @@
 """ZoomVid core module package.
 
-Contains the sketch encoder, router, and assembler modules to be implemented
-and trained on Google Colab.
+Exports SketchEncoder, Router, Assembler, and ZoomVidModule.
 """
 
-__all__ = ["sketch_encoder", "router", "assembler"]
+from zoomvid.module.zoomvid_module.sketch_encoder import SketchEncoder
+from zoomvid.module.zoomvid_module.router import Router
+from zoomvid.module.zoomvid_module.assembler import Assembler
+from zoomvid.module.zoomvid_module.zoomvid_module import ZoomVidModule
 
+__all__ = ["SketchEncoder", "Router", "Assembler", "ZoomVidModule"]

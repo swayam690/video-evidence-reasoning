@@ -29,6 +29,7 @@ from zoomvid.module.interface import ContextModule
 from zoomvid.module.reference.dummy import DummyModule
 from zoomvid.module.reference.similarity import SimilarityModule
 from zoomvid.module.reference.uniform import UniformModule
+from zoomvid.module.zoomvid_module.zoomvid_module import ZoomVidModule
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -37,6 +38,8 @@ MODULE_REGISTRY = {
     "uniform": UniformModule,
     "dummy": DummyModule,
     "similarity": SimilarityModule,
+    "zoomvid": ZoomVidModule,
+    "zoomvidmodule": ZoomVidModule,
 }
 
 
@@ -60,16 +63,27 @@ def load_module_from_checkpoint(
     in_features = ckpt["in_features"]
     out_features = ckpt["out_features"]
 
-    # Look up class from registry or try importing
+    # Look up class from registry (case-insensitive and stripping 'module' suffix)
+    key = module_class_name.lower().replace("module", "")
     if module_class_name.lower() in MODULE_REGISTRY:
         cls = MODULE_REGISTRY[module_class_name.lower()]
+    elif key in MODULE_REGISTRY:
+        cls = MODULE_REGISTRY[key]
     else:
         cls = MODULE_REGISTRY.get("dummy", DummyModule)
         logger.warning(
             "Module class '%s' not in registry. Using DummyModule as fallback.", module_class_name
         )
 
-    module = cls(in_features=in_features, out_features=out_features)
+    init_kwargs = {"in_features": in_features, "out_features": out_features}
+    if "sketch_dim" in ckpt and hasattr(cls, "__init__"):
+        try:
+            module = cls(in_features=in_features, out_features=out_features, sketch_dim=ckpt["sketch_dim"])
+        except TypeError:
+            module = cls(in_features=in_features, out_features=out_features)
+    else:
+        module = cls(in_features=in_features, out_features=out_features)
+
     module.load_state_dict(ckpt["state_dict"])
     if dtype is not None:
         module.to(device=device, dtype=dtype)

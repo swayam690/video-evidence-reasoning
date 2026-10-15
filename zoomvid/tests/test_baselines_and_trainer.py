@@ -121,3 +121,29 @@ def test_training_dataset_and_checkpointing() -> None:
         for p1, p2 in zip(module.parameters(), new_module.parameters()):
             assert torch.allclose(p1, p2)
 
+
+def test_eval_report_formatting() -> None:
+    """Test format_markdown_table and load_all_reports from zoomvid.eval.report."""
+    from zoomvid.eval.report import format_markdown_table, load_all_reports
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_path = Path(tmpdir)
+        report_data = {
+            "module_name": "TestModule",
+            "token_budget": 1024,
+            "num_samples": 10,
+            "accuracy": 0.85,
+            "avg_token_count": 720.0,
+            "avg_latency_ms": 150.0,
+        }
+        with open(tmp_path / "report1.json", "w") as f:
+            json.dump(report_data, f)
+
+        reports = load_all_reports(tmp_path)
+        assert len(reports) == 1
+        table = format_markdown_table(reports)
+        assert "TestModule" in table
+        assert "85.00%" in table
+        assert "1024" in table
+
+

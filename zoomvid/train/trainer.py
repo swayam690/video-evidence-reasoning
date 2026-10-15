@@ -30,6 +30,7 @@ from zoomvid.module.interface import ContextModule, VideoBatch
 from zoomvid.module.reference.dummy import DummyModule
 from zoomvid.module.reference.uniform import UniformModule
 from zoomvid.module.reference.similarity import SimilarityModule
+from zoomvid.module.zoomvid_module.zoomvid_module import ZoomVidModule
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -38,6 +39,8 @@ MODULE_REGISTRY = {
     "dummy": DummyModule,
     "uniform": UniformModule,
     "similarity": SimilarityModule,
+    "zoomvid": ZoomVidModule,
+    "zoomvidmodule": ZoomVidModule,
 }
 
 
@@ -140,7 +143,7 @@ class Trainer:
         self._set_seed(seed)
 
         self.device = backbone.device
-        self.module.to(device=self.device, dtype=self.backbone.dtype)
+        self.module.to(self.device)
 
         # Optimizer (only module parameters — backbone is frozen)
         self.optimizer = torch.optim.AdamW(
@@ -272,6 +275,9 @@ class Trainer:
         )
 
         loss = vlm_output.loss
+        if torch.isnan(loss) or torch.isinf(loss):
+            logger.warning("Loss is %s for video %s", loss.item(), sample.get("video_id", "?"))
+
         # Scale loss for gradient accumulation
         scaled_loss = loss / self.grad_accum
         scaled_loss.backward()

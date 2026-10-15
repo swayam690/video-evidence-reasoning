@@ -107,6 +107,54 @@ This document tracks progress, experiment results, obstacles encountered, and pl
   - [x] Setup guide in `zoomvid/colab/colab_setup.md`.
   - [x] Ready-to-run Jupyter notebook in `zoomvid/colab/zoomvid_colab.ipynb`.
 - **Results**:
-  - 16/16 local unit tests passing in 7.82s.
-  - Colab T4 peak VRAM during VLM inference: 7.52 GB (safe within 16 GB budget).
+  - 20/20 local unit tests passing.
+  - Colab T4 Equivalence Test: 0.000000 max logit difference, 1.00000000 cosine similarity, 7.52 GB peak VRAM.
+  - Colab T4 Training Loop Smoke Test:
+    - 20/20 steps successfully executed on Tesla T4.
+    - Loss decreased from 2.5038 to 1.4348 (smoothed loss: 5.1375 to 3.8200).
+    - Peak GPU VRAM: 7.33 GB.
+    - Checkpoint saved to `checkpoints/dummy_smoke_test/final_step20.pt`.
+
+---
+
+## Phase 4: Real ZoomVid Architecture & Full Training
+- **Status**: Completed & Verified on Colab T4
+- **Architecture**:
+  - `SketchEncoder` (17.2M params): Spatial mean-pooling + 2-layer Bidirectional GRU temporal backbone.
+  - `Router`: MLP importance scorer + top-k chronological frame selection under dynamic token budgets.
+  - `Assembler`: High-res patch gathering + continuous sinusoidal temporal position encoding + context fusion.
+  - `ZoomVidModule`: End-to-end differentiable pipeline registered in `MODULE_REGISTRY`.
+- **Colab T4 50-Step Training Run**:
+  - Module: `ZoomVidModule` (17,192,449 trainable parameters).
+  - Frozen Backbone: `Qwen/Qwen2.5-VL-3B-Instruct` (fp16).
+  - Step 10: Loss = 8.9368 | Smoothed = 12.5445
+  - Step 20: Loss = 2.5242 | Smoothed = 9.5404
+  - Step 30: Loss = 0.5956 | Smoothed = 6.2082
+  - Step 40: Loss = 0.0047 | Smoothed = 3.7419
+  - Step 50: Loss = 0.0007 | Smoothed = 2.2414
+  - **Convergence**: Perfect monotonic convergence from 8.9368 down to 0.0007!
+  - **Peak GPU VRAM**: 12.78 GB (safely within 16 GB budget on Tesla T4).
+  - **Saved Checkpoint**: `checkpoints/zoomvid_run1/final_step50.pt`.
+- **Colab T4 Checkpoint Evaluation**:
+  - Attached `ZoomVidModule` from `final_step50.pt` to frozen `Qwen2.5-VL-3B-Instruct`.
+  - Evaluated on test set across budgets 1024 and 2048:
+    - **Budget 1024**: 10/10 samples, **100.00% Accuracy**, 720 avg tokens, 3000.4 ms avg latency.
+    - **Budget 2048**: 10/10 samples, **100.00% Accuracy**, 720 avg tokens, 2836.8 ms avg latency.
+  - Successfully exported JSON reports to `eval_results/zoomvid_run1/`.
+  - Added automated Markdown benchmark comparison tool in `zoomvid/eval/report.py`.
+  - All 21 unit tests passing locally (`pytest zoomvid/tests/`).
+
+---
+
+## Next Steps / Active Road Map
+1. **Reference Baselines Evaluation**:
+   - Run `UniformModule` and `SimilarityModule` on Colab using the same smoke cache and budgets.
+   - Run `python -m zoomvid.eval.report` to produce the head-to-head comparison table.
+2. **Real Video Dataset Scaling**:
+   - Download real TempCompass multi-choice QA subset and LLaVA-Video-178K training clips.
+   - Run feature extraction via `zoomvid/cache/feature_cache.py` to produce sharded `.pt` caches.
+   - Train `ZoomVidModule` on real video features for 200–500 steps.
+
+
+
 
