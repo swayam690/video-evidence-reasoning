@@ -114,8 +114,8 @@ class Trainer:
         seed: int = 42,
         use_wandb: bool = False,
         use_tensorboard: bool = True,
-        prefix_text: str = "<|im_start|>user\n<|vision_start|>",
-        suffix_template: str = "<|vision_end|>{question}<|im_end|>\n<|im_start|>assistant\n",
+        prefix_text: str = "<|im_start|>user\n",
+        suffix_template: str = "{question}<|im_end|>\n<|im_start|>assistant\n",
     ) -> None:
         self.module = module
         self.backbone = backbone

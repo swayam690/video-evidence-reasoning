@@ -73,8 +73,8 @@ def evaluate_module(
     eval_manifest: List[Dict[str, Any]],
     token_budget: int = 2048,
     max_samples: Optional[int] = None,
-    prefix_text: str = "<|im_start|>user\n<|vision_start|>",
-    suffix_template: str = "<|vision_end|>{question}<|im_end|>\n<|im_start|>assistant\n",
+    prefix_text: str = "<|im_start|>user\n",
+    suffix_template: str = "{question}<|im_end|>\n<|im_start|>assistant\n",
     max_new_tokens: int = 64,
 ) -> EvalReport:
     """Evaluate a ContextModule on a dev set via the frozen VLM.
