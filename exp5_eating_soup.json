@@ -1,0 +1,26 @@
+{
+  "claim": "A person is eating a bowl of soup",
+  "video": "/home/hb/Downloads/Video_Ready_AI_Robot_Kills.mp4",
+  "num_frames_per_segment": 3,
+  "temporal_evidence_context": [
+    {
+      "start": 0,
+      "end": 3,
+      "description": "Interval: 0s\u20133s\nSummary: A robot interacts with a man in a workshop setting.\nVisible Entities: An older man wearing glasses and a plaid shirt with an apron, a humanoid robot with glowing blue lights, sparks flying in the background, various workshop tools and equipment.\nObservable Action: The robot's hand moves closer to the man's face, causing sparks to fly as it appears to touch or interact with him. The man's expression changes slightly, suggesting a reaction to the robot's movement.",
+      "state": "U"
+    },
+    {
+      "start": 3,
+      "end": 6,
+      "description": "Interval: 3s\u20136s\nSummary: A robot interacts with a human's hand, causing sparks.\nVisible Entities: An elderly man wearing glasses and an apron, a robot with glowing blue lights, a workshop background with tools and a light bulb.\nObservable Action: The robot's hand makes contact with the man's hand, generating sparks.",
+      "state": "U"
+    },
+    {
+      "start": 6,
+      "end": 8,
+      "description": "Interval: 6s\u20138s\nSummary: An older man interacts with a robot in a workshop setting.\nVisible Entities: Older man wearing glasses and an apron, humanoid robot with blue lights, workshop background with tools and equipment.\nObservable Action: The older man appears to be speaking or reacting to the robot, which remains stationary throughout the frames.",
+      "state": "U"
+    }
+  ],
+  "final_answer": "VERDICT: UNCERTAIN  \nREASONING: Across the observed segments, there is no evidence of a person eating a bowl of soup. All segments focus on interactions between a robot and an older man in a workshop environment. There are no bowls, soup, or eating actions present in any of the segments."
+}

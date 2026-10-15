@@ -1,0 +1,32 @@
+{
+  "claim": "The door is opening from left to right",
+  "video": "/home/hb/Downloads/89274-614024131.mp4",
+  "num_frames_per_segment": 3,
+  "temporal_evidence_context": [
+    {
+      "start": 0,
+      "end": 3,
+      "description": "Interval: 0s\u20133s\nSummary: A black door transitions from closed to partially open with a green light appearing along its edge.\nVisible Entities: Black door, silver handle, white wall background, green light.\nObservable Action: Door gradually opens; green light becomes visible as the door opens.",
+      "state": "U"
+    },
+    {
+      "start": 3,
+      "end": 6,
+      "description": "Interval: 3s\u20136s\nSummary: A black door gradually opens wider, revealing more of the green screen behind it.\nVisible Entities: Black door with silver handle, green screen background, white walls and floor.\nObservable Action: Door opens progressively wider; no person or interaction visible.",
+      "state": "U"
+    },
+    {
+      "start": 6,
+      "end": 9,
+      "description": "Interval: 6s\u20139s\nSummary: The door remains open throughout the interval with no changes in its position or any other elements.\nVisible Entities: A black door, a green screen behind the door, white walls, and floor.\nObservable Action: None / State Only",
+      "state": "U"
+    },
+    {
+      "start": 9,
+      "end": 10,
+      "description": "Interval: 9s\u201310s  \nSummary: The scene remains static with no observable changes or actions.  \nVisible Entities: A black door with a silver handle, a green screen beyond the door, white walls, and floor.  \nObservable Action: None / State Only",
+      "state": "U"
+    }
+  ],
+  "final_answer": "VERDICT: UNCERTAIN  \nREASONING: The video segments do not provide clear directional information about the door's movement relative to the camera perspective. While the door is observed opening, there is no explicit indication of whether this movement occurs from left to right. The lack of observable evidence regarding directionality across all segments leads to an uncertain conclusion."
+}

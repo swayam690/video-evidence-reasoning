@@ -1,0 +1,26 @@
+{
+  "claim": "A robot fires lasers or sparks",
+  "video": "/home/hb/Downloads/Video_Ready_AI_Robot_Kills.mp4",
+  "num_frames_per_segment": 3,
+  "temporal_evidence_context": [
+    {
+      "start": 0,
+      "end": 3,
+      "description": "Interval: 0s\u20133s\nSummary: Segment from 0s to 3s.\nVisible Entities: Unknown.\nObservable Action: None / State Only.",
+      "state": "U"
+    },
+    {
+      "start": 3,
+      "end": 6,
+      "description": "Interval: 3s\u20136s\nSummary: Segment from 3s to 6s.\nVisible Entities: Unknown.\nObservable Action: None / State Only.",
+      "state": "U"
+    },
+    {
+      "start": 6,
+      "end": 8,
+      "description": "Interval: 6s\u20138s\nSummary: Segment from 6s to 8s.\nVisible Entities: Unknown.\nObservable Action: None / State Only.",
+      "state": "U"
+    }
+  ],
+  "final_answer": "VERDICT: UNCERTAIN\nREASONING: Model call failed."
+}
