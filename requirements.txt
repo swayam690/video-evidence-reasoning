@@ -1,4 +1,0 @@
-openai>=1.30.0          # OpenRouter uses the OpenAI-compatible API
-python-dotenv>=1.0.0    # Loads .env file into environment variables
-moviepy>=1.0.3          # Splits video into temporal segments
-Pillow>=10.0.0          # Converts video frames to base64 images for the VLM

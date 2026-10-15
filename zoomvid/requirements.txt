@@ -1,0 +1,28 @@
+# Core deep learning & VLM dependencies
+torch>=2.2.0
+torchvision
+transformers>=4.45.0
+accelerate>=0.26.0
+qwen-vl-utils>=0.0.8
+
+# Video processing
+decord>=0.6.0
+av>=11.0.0
+opencv-python-headless>=4.8.0
+
+# Data, caching & evaluation
+huggingface-hub>=0.20.0
+datasets>=2.16.0
+safetensors>=0.4.0
+pyyaml>=6.0
+tqdm>=4.66.0
+numpy>=1.24.0
+
+# Evaluation & logging
+lmms-eval>=0.2.0
+wandb>=0.16.0
+tensorboard>=2.15.0
+
+# Testing & formatting
+pytest>=7.4.0
+
