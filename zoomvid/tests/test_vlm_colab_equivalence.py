@@ -5,14 +5,15 @@ Run this script on Google Colab with GPU enabled:
 
 Verifies:
 1. All parameters in FrozenVLMBackbone have requires_grad=False.
-2. Visual tokens extracted post-patch-merger and fed back through the custom
-   injection path match the output logits of the native VLM pipeline in fp16.
+2. Visual tokens extracted post-patch-merger and fed back via mm_encoder_outputs
+   produce logits identical to the native VLM pipeline in fp16.
 """
 
 import sys
 import torch
 from PIL import Image
 from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
+from transformers.modeling_outputs import BaseModelOutputWithPooling
 
 from zoomvid.core.vlm_wrapper import FrozenVLMBackbone
 
@@ -56,7 +57,6 @@ def run_colab_vlm_equivalence_test() -> None:
 
     # Step 3: Create synthetic test input
     print("\n3. Creating synthetic input image and prompt...")
-    # Create a 336x336 synthetic image
     test_image = Image.new("RGB", (336, 336), color=(128, 64, 200))
     prompt_text = "Describe what you see in the image."
 
@@ -72,27 +72,22 @@ def run_colab_vlm_equivalence_test() -> None:
         }
     ]
 
-    text_prompt = processor.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True
-    )
-    image_inputs, video_inputs = processor.image_processor(
-        images=[test_image], return_tensors="pt"
-    )
-
-    inputs = processor(
-        text=[text_prompt],
-        images=test_image,
-        padding=True,
+    inputs = processor.apply_chat_template(
+        messages,
+        tokenize=True,
+        add_generation_prompt=True,
+        return_dict=True,
         return_tensors="pt",
-    ).to(device)
+    )
+    inputs = {k: v.to(device) for k, v in inputs.items()}
 
-    # Step 4: Run native pipeline
+    # Step 4: Run native pipeline (pixel_values → vision encoder → masked_scatter → LLM)
     print("4. Running native VLM pipeline forward pass...")
     with torch.no_grad():
         native_outputs = backbone.model(**inputs)
         native_logits = native_outputs.logits
 
-    # Step 5: Extract visual tokens using backbone
+    # Step 5: Extract visual tokens post-patch-merger
     print("5. Extracting visual features post-patch-merger...")
     with torch.no_grad():
         pixel_values = inputs["pixel_values"]
@@ -102,27 +97,27 @@ def run_colab_vlm_equivalence_test() -> None:
         )
     print(f"   Extracted visual tokens shape: {list(visual_tokens.shape)}")
 
-    # In batch format [B, T, D]
-    visual_tokens_batched = (
-        visual_tokens if visual_tokens.ndim == 3 else visual_tokens.unsqueeze(0)
-    )
+    # Step 6: Feed extracted visual tokens back via mm_encoder_outputs
+    # This bypasses the vision encoder but preserves masked_scatter and M-RoPE
+    print("6. Re-injecting visual tokens via mm_encoder_outputs...")
+    mm_encoder_outputs = {
+        "image": BaseModelOutputWithPooling(
+            last_hidden_state=None,
+            pooler_output=[visual_tokens],
+            hidden_states=None,
+            attentions=None,
+        )
+    }
 
-    # Step 6: Feed visual tokens back through the injection path
-    print("6. Feeding visual tokens through custom injection path...")
-    # Derive prefix and suffix directly from processor's chat template
-    if "<|vision_start|>" in text_prompt and "<|vision_end|>" in text_prompt:
-        prefix = text_prompt.split("<|vision_start|>")[0] + "<|vision_start|>"
-        suffix = "<|vision_end|>" + text_prompt.split("<|vision_end|>")[1]
-    else:
-        prefix = "<|im_start|>user\n<|vision_start|>"
-        suffix = f"<|vision_end|>{prompt_text}<|im_end|>\n<|im_start|>assistant\n"
+    # Build inputs WITHOUT pixel_values (we supply pre-computed features instead)
+    inject_inputs = {
+        k: v for k, v in inputs.items()
+        if k not in ("pixel_values", "pixel_values_videos")
+    }
+    inject_inputs["mm_encoder_outputs"] = mm_encoder_outputs
 
     with torch.no_grad():
-        injected_outputs = backbone.forward_with_injected_tokens(
-            module_tokens=visual_tokens_batched,
-            prefix_text=prefix,
-            suffix_text=suffix,
-        )
+        injected_outputs = backbone.model(**inject_inputs)
         injected_logits = injected_outputs.logits
 
     # Step 7: Compare logits
@@ -130,21 +125,29 @@ def run_colab_vlm_equivalence_test() -> None:
     print(f"   Native logits shape:   {list(native_logits.shape)}")
     print(f"   Injected logits shape: {list(injected_logits.shape)}")
 
-    # Check maximum absolute difference
-    if native_logits.shape == injected_logits.shape:
-        diff = torch.abs(native_logits - injected_logits).max().item()
-        print(f"   Max absolute difference: {diff:.6f}")
-        assert diff < 1e-2, f"Logit difference too high: {diff}"
-        print("   [PASS] Injection path logits match native pipeline!")
-    else:
-        print(f"   Note: Sequence lengths ({native_logits.shape[1]} vs {injected_logits.shape[1]}) differ slightly due to template tokens.")
-        print("   Comparing last token logits (next-token prediction distribution):")
-        cos_sim = torch.cosine_similarity(
-            native_logits[0, -1, :], injected_logits[0, -1, :], dim=-1
-        ).item()
-        print(f"   Cosine similarity of next token prediction: {cos_sim:.6f}")
-        assert cos_sim > 0.99, f"Cosine similarity below threshold: {cos_sim}"
-        print("   [PASS] Next token prediction distributions match (>0.99 cosine similarity)!")
+    assert native_logits.shape == injected_logits.shape, (
+        f"Shape mismatch: native {native_logits.shape} vs injected {injected_logits.shape}"
+    )
+
+    max_diff = torch.abs(native_logits.float() - injected_logits.float()).max().item()
+    mean_diff = torch.abs(native_logits.float() - injected_logits.float()).mean().item()
+    cos_sim = torch.cosine_similarity(
+        native_logits[0, -1, :].float(), injected_logits[0, -1, :].float(), dim=-1
+    ).item()
+
+    print(f"   Max absolute difference:  {max_diff:.6f}")
+    print(f"   Mean absolute difference: {mean_diff:.8f}")
+    print(f"   Cosine similarity (last token): {cos_sim:.8f}")
+
+    # In fp16, exact match expected since we extracted and re-injected the same features
+    assert max_diff < 0.01, f"Max logit difference too high: {max_diff}"
+    assert cos_sim > 0.9999, f"Cosine similarity too low: {cos_sim}"
+    print("   [PASS] Injection path logits match native pipeline!")
+
+    # Step 8: Log VRAM usage
+    if torch.cuda.is_available():
+        peak_vram = torch.cuda.max_memory_allocated() / (1024**3)
+        print(f"\n8. Peak GPU VRAM usage: {peak_vram:.2f} GB")
 
     print("\n" + "=" * 70)
     print("ALL PHASE 0 EQUIVALENCE TESTS PASSED SUCCESSFULLY!")
@@ -153,4 +156,3 @@ def run_colab_vlm_equivalence_test() -> None:
 
 if __name__ == "__main__":
     run_colab_vlm_equivalence_test()
-

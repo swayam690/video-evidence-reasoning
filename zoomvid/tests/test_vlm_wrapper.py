@@ -4,7 +4,6 @@ import pytest
 import torch
 import torch.nn as nn
 from typing import Any
-from transformers import PretrainedConfig
 
 from zoomvid.core.helpers import (
     calculate_budget_allocation,
@@ -13,7 +12,7 @@ from zoomvid.core.helpers import (
     format_timestamp_span,
     verify_chronological_order,
 )
-from zoomvid.core.vlm_wrapper import FrozenVLMBackbone, parse_dtype
+from zoomvid.core.vlm_wrapper import parse_dtype
 
 
 def test_parse_dtype() -> None:
@@ -49,28 +48,8 @@ def test_helpers_formatting_and_budget() -> None:
     assert not verify_chronological_order(torch.tensor([[0.0, 2.0], [1.5, 0.5]]))
 
 
-class MockTokenizer:
-    """Lightweight mock tokenizer for testing embedding assembly without Hub downloads."""
-
-    def encode(self, text: str, add_special_tokens: bool = False, return_tensors: str = "pt") -> torch.Tensor:
-        # Simple ASCII tokenization for mock testing
-        tokens = [ord(c) % 50 for c in text] or [1]
-        t = torch.tensor([tokens], dtype=torch.long)
-        return t
-
-    def decode(self, token_ids: torch.Tensor, skip_special_tokens: bool = True) -> str:
-        return "mock answer"
-
-
-class MockProcessor:
-    """Lightweight mock processor."""
-
-    def __init__(self) -> None:
-        self.tokenizer = MockTokenizer()
-
-
 class MockVLMModel(nn.Module):
-    """Tiny mock model representing Qwen2.5-VL for injection testing."""
+    """Tiny mock model for local testing of freeze/unfreeze logic."""
 
     def __init__(self, hidden_size: int = 32) -> None:
         super().__init__()
@@ -82,12 +61,7 @@ class MockVLMModel(nn.Module):
     def get_input_embeddings(self) -> nn.Module:
         return self.embed
 
-    def forward(
-        self,
-        inputs_embeds: torch.Tensor,
-        labels: torch.Tensor | None = None,
-        **kwargs,
-    ) -> Any:
+    def forward(self, inputs_embeds: torch.Tensor, labels: torch.Tensor | None = None, **kwargs) -> Any:
         h = self.linear(inputs_embeds)
         logits = self.lm_head(h)
         loss = None
@@ -107,6 +81,8 @@ class MockVLMModel(nn.Module):
 
 def test_frozen_assertion_on_unfrozen_parameters() -> None:
     """Test that FrozenVLMBackbone assert_frozen detects unfrozen parameters."""
+    from zoomvid.core.vlm_wrapper import FrozenVLMBackbone
+
     wrapper = FrozenVLMBackbone.__new__(FrozenVLMBackbone)
     nn.Module.__init__(wrapper)
     wrapper.model = MockVLMModel(hidden_size=16)
@@ -120,82 +96,3 @@ def test_frozen_assertion_on_unfrozen_parameters() -> None:
     wrapper.assert_frozen()
     for p in wrapper.model.parameters():
         assert not p.requires_grad
-
-
-def test_injection_sequence_assembly() -> None:
-    """Test assemble_injection_sequence dimensions, ordering, and label masking."""
-    hidden_size = 32
-    wrapper = FrozenVLMBackbone.__new__(FrozenVLMBackbone)
-    nn.Module.__init__(wrapper)
-    wrapper.model = MockVLMModel(hidden_size=hidden_size)
-    wrapper.freeze()
-    wrapper.processor = MockProcessor()
-    wrapper.llm_hidden_size = hidden_size
-    wrapper.target_dtype = torch.float32
-
-    batch_size = 2
-    module_token_count = 10
-    module_tokens = torch.randn(batch_size, module_token_count, hidden_size)
-
-    prefix_text = "Prompt:"
-    suffix_text = "What is this?"
-    target_text = "A cat."
-
-    full_embeds, labels, prompt_len, target_len = wrapper.assemble_injection_sequence(
-        module_tokens=module_tokens,
-        prefix_text=prefix_text,
-        suffix_text=suffix_text,
-        target_text=target_text,
-    )
-
-    prefix_len = len(wrapper.processor.tokenizer.encode(prefix_text)[0])
-    suffix_len = len(wrapper.processor.tokenizer.encode(suffix_text)[0])
-    expected_prompt_len = prefix_len + module_token_count + suffix_len
-    expected_target_len = len(wrapper.processor.tokenizer.encode(target_text)[0])
-
-    assert prompt_len == expected_prompt_len
-    assert target_len == expected_target_len
-    assert full_embeds.shape == (batch_size, prompt_len + target_len, hidden_size)
-
-    # Assert labels mask prompt with -100
-    assert (labels[:, :prompt_len] == -100).all()
-    # Assert labels contain valid token ids for target
-    assert (labels[:, prompt_len:] != -100).all()
-
-
-def test_injection_path_numerical_equivalence() -> None:
-    """Test that feeding visual embeddings through assemble_injection_sequence
-
-    yields the exact same output as passing them as a pre-concatenated input.
-    """
-    hidden_size = 32
-    wrapper = FrozenVLMBackbone.__new__(FrozenVLMBackbone)
-    nn.Module.__init__(wrapper)
-    wrapper.model = MockVLMModel(hidden_size=hidden_size)
-    wrapper.freeze()
-    wrapper.processor = MockProcessor()
-    wrapper.llm_hidden_size = hidden_size
-    wrapper.target_dtype = torch.float32
-
-    b, t = 1, 8
-    visual_tokens = torch.randn(b, t, hidden_size)
-
-    # Forward via wrapper's forward_with_injected_tokens
-    out1 = wrapper.forward_with_injected_tokens(
-        module_tokens=visual_tokens,
-        prefix_text="Prefix",
-        suffix_text="Suffix",
-        target_text="Answer",
-    )
-
-    # Reconstruct the exact inputs manually
-    full_embeds, labels, _, _ = wrapper.assemble_injection_sequence(
-        module_tokens=visual_tokens,
-        prefix_text="Prefix",
-        suffix_text="Suffix",
-        target_text="Answer",
-    )
-    out2 = wrapper.model(inputs_embeds=full_embeds, labels=labels)
-
-    assert torch.allclose(out1.logits, out2.logits, atol=1e-5)
-    assert torch.allclose(out1.loss, out2.loss, atol=1e-5)

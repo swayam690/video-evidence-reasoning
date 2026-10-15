@@ -1,8 +1,9 @@
 """Frozen Vision-Language Model Backbone Wrapper for ZoomVid.
 
 Wraps Qwen/Qwen2.5-VL-3B-Instruct in a strictly frozen configuration (requires_grad=False).
-Provides utilities for per-frame vision feature extraction, custom embedding injection,
-answer generation, and log-probability scoring of target answers.
+Provides utilities for per-frame vision feature extraction, custom embedding injection
+via mm_encoder_outputs (preserving M-RoPE 3D positional encoding), answer generation,
+and log-probability scoring of target answers.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 from transformers import AutoConfig, AutoProcessor, Qwen2_5_VLForConditionalGeneration
+from transformers.modeling_outputs import BaseModelOutputWithPooling
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +37,7 @@ class FrozenVLMBackbone(nn.Module):
 
     Ensures all parameters are frozen and provides modular entry points for
     extracting vision tokens and injecting custom module representations
-    into the LLM embedding stream.
+    into the LLM embedding stream via mm_encoder_outputs (preserving M-RoPE).
     """
 
     def __init__(
@@ -84,6 +86,12 @@ class FrozenVLMBackbone(nn.Module):
             self.vision_feature_size = self.llm_hidden_size
             self.spatial_patch_size = 14
             self.spatial_merge_size = 2
+
+        # Read special token IDs for building injection input_ids
+        self.image_token_id: int = getattr(self.config, "image_token_id", 151655)
+        self.video_token_id: int = getattr(self.config, "video_token_id", 151656)
+        self.vision_start_token_id: int = getattr(self.config, "vision_start_token_id", 151652)
+        self.vision_end_token_id: int = getattr(self.config, "vision_end_token_id", 151653)
 
         if load_pretrained:
             logger.info("Loading pretrained model %s with dtype %s", model_id, self.target_dtype)
@@ -157,12 +165,11 @@ class FrozenVLMBackbone(nn.Module):
         """Extract per-frame vision features post-patch-merger.
 
         Args:
-            pixel_values: Vision pixel tensor of shape [Total_patches, patch_dim]
-                          prepared by processor.
+            pixel_values: Vision pixel tensor prepared by processor.
             grid_thw: Grid dimensions [N, 3] with (temporal, height, width) patch counts.
 
         Returns:
-            Features post-patch-merger with dimension matching vision_feature_size.
+            Features post-patch-merger of shape [Total_merged_patches, D_vision].
         """
         pixel_values = pixel_values.to(device=self.device, dtype=self.dtype)
         grid_thw = grid_thw.to(device=self.device)
@@ -182,81 +189,72 @@ class FrozenVLMBackbone(nn.Module):
             return vision_outputs.last_hidden_state
         return vision_outputs[0]
 
-    def embed_text(self, text: str) -> torch.Tensor:
-        """Tokenize and compute embedding vectors for a text string.
-
-        Args:
-            text: Input text prompt.
-
-        Returns:
-            Embedding tensor of shape [1, L, D_llm].
-        """
-        if self.processor is None or self.processor.tokenizer is None:
-            raise RuntimeError("Processor/tokenizer is not initialized.")
-        input_ids = self.processor.tokenizer.encode(
-            text, add_special_tokens=False, return_tensors="pt"
-        ).to(self.device)
-        return self.embedding_layer(input_ids)
-
-    def assemble_injection_sequence(
+    def build_injection_input_ids(
         self,
-        module_tokens: torch.Tensor,
         prefix_text: str,
-        suffix_text: str = "",
+        suffix_text: str,
+        num_visual_tokens: int,
         target_text: Optional[str] = None,
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], int, int]:
-        """Combine text prompt embeddings with injected module tokens.
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], torch.Tensor, int, int]:
+        """Build input_ids with image placeholder tokens for module injection.
+
+        Creates: [prefix_tokens, vision_start, image_pad * T, vision_end, suffix_tokens, target_tokens]
+        This ensures proper M-RoPE 3D positional encoding for visual tokens.
 
         Args:
-            module_tokens: Injected tokens from ContextModule of shape [B, T, D_llm].
-            prefix_text: Text placed BEFORE the visual tokens (e.g. system instruction).
-            suffix_text: Text placed AFTER the visual tokens (e.g. user question).
-            target_text: Optional target answer string for scoring/training.
+            prefix_text: Text before the visual tokens (e.g. system prompt).
+            suffix_text: Text after the visual tokens (e.g. user question).
+            num_visual_tokens: Number of visual tokens T produced by the context module.
+            target_text: Optional target answer text for loss computation.
 
         Returns:
             Tuple of:
-            - full_embeds: [B, L_total, D_llm]
-            - labels: Optional [B, L_total] long tensor for cross-entropy loss (masked with -100)
-            - prompt_length: Length of prompt preceding the target tokens
-            - target_length: Number of target tokens (0 if target_text is None)
+            - input_ids: [1, L_total] with image placeholders
+            - labels: Optional [1, L_total] with -100 masking for prompt
+            - mm_token_type_ids: [1, L_total] marking image token positions
+            - prompt_length: Number of prompt tokens (before target)
+            - target_length: Number of target tokens
         """
-        batch_size = module_tokens.shape[0]
-        prefix_embeds = self.embed_text(prefix_text).repeat(batch_size, 1, 1)
-        suffix_embeds = (
-            self.embed_text(suffix_text).repeat(batch_size, 1, 1)
-            if suffix_text
-            else torch.empty(batch_size, 0, self.llm_hidden_size, device=self.device, dtype=self.dtype)
+        tokenizer = self.processor.tokenizer
+
+        prefix_ids = tokenizer.encode(prefix_text, add_special_tokens=False)
+        suffix_ids = tokenizer.encode(suffix_text, add_special_tokens=False)
+
+        # Build: [prefix, vision_start, image_pad * T, vision_end, suffix]
+        prompt_ids = (
+            prefix_ids
+            + [self.vision_start_token_id]
+            + [self.image_token_id] * num_visual_tokens
+            + [self.vision_end_token_id]
+            + suffix_ids
         )
-
-        module_tokens = module_tokens.to(device=self.device, dtype=self.dtype)
-
-        # Sequence: [Prefix, Visual_Module_Tokens, Suffix]
-        prompt_embeds = torch.cat([prefix_embeds, module_tokens, suffix_embeds], dim=1)
-        prompt_length = prompt_embeds.shape[1]
+        prompt_length = len(prompt_ids)
 
         if target_text is not None:
-            target_ids = self.processor.tokenizer.encode(
-                target_text, add_special_tokens=False, return_tensors="pt"
-            ).to(self.device)
-            target_embeds = self.embedding_layer(target_ids).repeat(batch_size, 1, 1)
-            target_length = target_ids.shape[1]
-
-            full_embeds = torch.cat([prompt_embeds, target_embeds], dim=1)
-
-            # Build cross-entropy labels: mask out prompt tokens with -100
-            labels = torch.full(
-                (batch_size, prompt_length + target_length),
-                -100,
-                dtype=torch.long,
-                device=self.device,
-            )
-            labels[:, prompt_length:] = target_ids.repeat(batch_size, 1)
+            target_ids = tokenizer.encode(target_text, add_special_tokens=False)
+            target_length = len(target_ids)
+            full_ids = prompt_ids + target_ids
         else:
-            full_embeds = prompt_embeds
-            labels = None
+            target_ids = []
             target_length = 0
+            full_ids = prompt_ids
 
-        return full_embeds, labels, prompt_length, target_length
+        input_ids = torch.tensor([full_ids], dtype=torch.long, device=self.device)
+
+        # Build mm_token_type_ids: 1 for image tokens, 0 for text
+        mm_type_ids = torch.zeros_like(input_ids)
+        img_start = len(prefix_ids) + 1  # after vision_start
+        img_end = img_start + num_visual_tokens
+        mm_type_ids[0, img_start:img_end] = 1
+
+        # Build labels: -100 for prompt, actual ids for target
+        if target_text is not None:
+            labels = torch.full_like(input_ids, -100)
+            labels[0, prompt_length:] = input_ids[0, prompt_length:]
+        else:
+            labels = None
+
+        return input_ids, labels, mm_type_ids, prompt_length, target_length
 
     def forward_with_injected_tokens(
         self,
@@ -264,27 +262,65 @@ class FrozenVLMBackbone(nn.Module):
         prefix_text: str,
         suffix_text: str = "",
         target_text: Optional[str] = None,
+        image_grid_thw: Optional[torch.Tensor] = None,
     ) -> Any:
-        """Run forward pass using injected context module tokens.
+        """Run forward pass injecting context module tokens via mm_encoder_outputs.
+
+        Uses the model's native masked_scatter + M-RoPE path to ensure correct
+        3D positional encoding for the injected visual tokens.
 
         Args:
-            module_tokens: Injected tokens [B, T, D_llm].
+            module_tokens: Injected tokens [B, T, D_llm] from a ContextModule.
             prefix_text: Text preceding visual tokens.
             suffix_text: Text following visual tokens.
             target_text: Optional target text for calculating loss.
+            image_grid_thw: Optional grid dimensions [N, 3]. If None, treats tokens
+                            as a 1D temporal sequence.
 
         Returns:
             Model output containing logits, and loss if target_text is provided.
         """
-        full_embeds, labels, _, _ = self.assemble_injection_sequence(
-            module_tokens=module_tokens,
+        b, t, d = module_tokens.shape
+        module_tokens = module_tokens.to(device=self.device, dtype=self.dtype)
+
+        # Build input_ids with placeholder tokens
+        input_ids, labels, mm_type_ids, _, _ = self.build_injection_input_ids(
             prefix_text=prefix_text,
             suffix_text=suffix_text,
+            num_visual_tokens=t,
             target_text=target_text,
         )
 
+        # Repeat for batch
+        if b > 1:
+            input_ids = input_ids.repeat(b, 1)
+            mm_type_ids = mm_type_ids.repeat(b, 1)
+            if labels is not None:
+                labels = labels.repeat(b, 1)
+
+        # Build image_grid_thw if not provided: treat as 1D temporal sequence
+        if image_grid_thw is None:
+            image_grid_thw = torch.tensor([[t, 1, 1]], dtype=torch.long, device=self.device)
+
+        # Wrap module tokens as mm_encoder_outputs (one list entry per batch element)
+        per_sample_tokens = [module_tokens[i] for i in range(b)]
+        mm_encoder_outputs = {
+            "image": BaseModelOutputWithPooling(
+                last_hidden_state=None,
+                pooler_output=per_sample_tokens,
+                hidden_states=None,
+                attentions=None,
+            )
+        }
+
+        attention_mask = torch.ones_like(input_ids)
+
         outputs = self.model(
-            inputs_embeds=full_embeds,
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            mm_token_type_ids=mm_type_ids,
+            image_grid_thw=image_grid_thw,
+            mm_encoder_outputs=mm_encoder_outputs,
             labels=labels,
         )
         return outputs
@@ -295,6 +331,7 @@ class FrozenVLMBackbone(nn.Module):
         prefix_text: str,
         target_text: str,
         suffix_text: str = "",
+        image_grid_thw: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         """Compute the log-probability of a target answer string.
 
@@ -303,6 +340,7 @@ class FrozenVLMBackbone(nn.Module):
             prefix_text: Prompt prefix.
             target_text: Target answer to score.
             suffix_text: Prompt suffix.
+            image_grid_thw: Optional grid dimensions.
 
         Returns:
             Dict containing:
@@ -311,19 +349,22 @@ class FrozenVLMBackbone(nn.Module):
             - 'avg_log_prob': Average log likelihood per target token.
             - 'target_token_count': Number of target tokens.
         """
-        full_embeds, labels, prompt_len, target_len = self.assemble_injection_sequence(
+        _, _, _, _, target_len = self.build_injection_input_ids(
+            prefix_text=prefix_text,
+            suffix_text=suffix_text,
+            num_visual_tokens=module_tokens.shape[1],
+            target_text=target_text,
+        )
+
+        outputs = self.forward_with_injected_tokens(
             module_tokens=module_tokens,
             prefix_text=prefix_text,
             suffix_text=suffix_text,
             target_text=target_text,
+            image_grid_thw=image_grid_thw,
         )
 
-        outputs = self.model(
-            inputs_embeds=full_embeds,
-            labels=labels,
-        )
-
-        loss = outputs.loss  # Mean cross-entropy over target tokens
+        loss = outputs.loss
         avg_log_prob = -loss
         total_log_prob = avg_log_prob * target_len
 
@@ -341,6 +382,7 @@ class FrozenVLMBackbone(nn.Module):
         prefix_text: str,
         suffix_text: str = "",
         max_new_tokens: int = 128,
+        image_grid_thw: Optional[torch.Tensor] = None,
         **generate_kwargs: Any,
     ) -> List[str]:
         """Generate text conditioned on injected module tokens and text prompts.
@@ -350,27 +392,55 @@ class FrozenVLMBackbone(nn.Module):
             prefix_text: Prompt prefix.
             suffix_text: Prompt suffix.
             max_new_tokens: Maximum tokens to generate.
+            image_grid_thw: Optional grid dimensions.
             **generate_kwargs: Additional arguments for model.generate.
 
         Returns:
             List of generated text strings per batch element.
         """
-        full_embeds, _, _, _ = self.assemble_injection_sequence(
-            module_tokens=module_tokens,
+        b, t, d = module_tokens.shape
+        module_tokens = module_tokens.to(device=self.device, dtype=self.dtype)
+
+        input_ids, _, mm_type_ids, prompt_length, _ = self.build_injection_input_ids(
             prefix_text=prefix_text,
             suffix_text=suffix_text,
+            num_visual_tokens=t,
             target_text=None,
         )
 
+        if b > 1:
+            input_ids = input_ids.repeat(b, 1)
+            mm_type_ids = mm_type_ids.repeat(b, 1)
+
+        if image_grid_thw is None:
+            image_grid_thw = torch.tensor([[t, 1, 1]], dtype=torch.long, device=self.device)
+
+        per_sample_tokens = [module_tokens[i] for i in range(b)]
+        mm_encoder_outputs = {
+            "image": BaseModelOutputWithPooling(
+                last_hidden_state=None,
+                pooler_output=per_sample_tokens,
+                hidden_states=None,
+                attentions=None,
+            )
+        }
+
+        attention_mask = torch.ones_like(input_ids)
+
         generated_ids = self.model.generate(
-            inputs_embeds=full_embeds,
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            mm_token_type_ids=mm_type_ids,
+            image_grid_thw=image_grid_thw,
+            mm_encoder_outputs=mm_encoder_outputs,
             max_new_tokens=max_new_tokens,
             **generate_kwargs,
         )
 
+        # Trim prompt tokens from generated output
         results: List[str] = []
         for seq in generated_ids:
-            decoded = self.processor.tokenizer.decode(seq, skip_special_tokens=True)
+            output_ids = seq[prompt_length:]
+            decoded = self.processor.tokenizer.decode(output_ids, skip_special_tokens=True)
             results.append(decoded)
         return results
-
